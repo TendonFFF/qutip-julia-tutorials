@@ -1,0 +1,151 @@
+---
+title: "Vacuum Rabi oscillation"
+author: Li-Xun Cai
+date: last-modified
+date-format: iso
+
+engine: julia
+---
+
+Inspirations taken from this [QuTiP tutorial](https://nbviewer.org/urls/qutip.org/qutip-tutorials/tutorials-v5/time-evolution/004_rabi-oscillations.ipynb) by J.R. Johansson, P.D. Nation, and C. Staufenbiel
+
+In this notebook, the usage of `QuantumToolbox.sesolve()` and `QuantumToolbox.mesolve()` would be demonstrated with Jaynes-Cummings model in isolated case and dissipative case. In dissipative case, an bosonic environment would interact with both the cavity and the two-level atom of JC model.
+
+## `using` Packages 
+
+```{julia}
+using QuantumToolbox
+using CairoMakie     # For high quality plotting
+```
+
+## Introduction to Jaynes-Cumming model
+Jaynes-Cummings (JC) model, being a simplest quantum mechanical model for light-matter intertaction, describes an atom interacting with electromagnetic field. To simplify the interaction at the time of model proposal, JC model considers a two-level atom interacting with single bosonic mode (or you can consider it a single-mode cavity), i.e., a two dimensional Hilbert space interacting with a Fock space. <!-- (with finite truncation $N$) -->
+
+The Hamiltonian of JC model is given by
+
+$$
+\hat{H}_\text{tot} = \hat{H}_{\text{a}} + \hat{H}_{\text{c}} + \hat{H}_{\text{int}}
+$$
+
+where 
+
+- $\hat{H}_{\text{a}} = \frac{\omega_\text{a}}{2} \hat{\sigma}_z$: Hamiltonian for atom alone
+- $\hat{H}_{\text{c}} = \omega_\text{c} \hat{a}^\dagger \hat{a}$: Hamiltonian for cavity alone
+- $\hat{H}_{\text{int}} = \Omega \left( \hat{\sigma}^\dagger + \hat{\sigma} \right) \cdot \left( \hat{a}^\dagger + \hat{a} \right)$: Interaction Hamiltonian for coherent interaction
+
+with
+
+- $\omega_\text{a}$: Frequency gap of two-level atom
+- $\omega_\text{c}$: Frequency of cavity's EM mode (This is not specified whether to be in resonance with atom or not.)
+- $\Omega$         : Coupling strength between atom and cavity
+- $\hat{\sigma}_z$ : Pauli's $z$ matrix. Equivelant to $|e\rangle\langle e| - |g\rangle\langle g|$
+- $\hat{a}$        : Annihilation operator in Fock space <!-- $N$-truncated -->
+- $\hat{\sigma}$   : Lowering operator of atom. Equivalent to $|g\rangle\langle e|$
+
+Applying rotating wave approximation (RWA), the counter rotating terms ($\hat{\sigma} \cdot \hat{a}$ and its hermition conjugate) which rotate considerably faster than the others in the interaction picture can be ignored, yeilding
+
+$$
+\hat{H}_\text{tot} \approx \hat{H}_{\text{atom}} + \hat{H}_{\text{cavity}} + \Omega \left( \hat{\sigma} \cdot \hat{a}^\dagger + \hat{\sigma}^\dagger \cdot \hat{a} \right)
+$$
+
+The non-RWA case could become more interesting in the \emph{Ultrastrong Coupling Regime} (USC) that worth itself an independent tutorial. Therefore, we will pass that to [this tutorial]() for `liouvillian_generalized()`.  
+
+### Usage of `QuantumToolbox`for JC model in general
+
+Since the packages are already imported with `using` at the begining, we hereby start by defining some parameters and system Hamiltonian.
+
+```{julia}
+N = 15 # Fock space truncated dimension
+
+ωa = 1
+ωc = 1 # consider cavity and atom are in resonance
+ωc_ = 0.7 # consider cavity and atom are off resonance
+σz = sigmaz() ⊗ qeye(N) # order of tensor product should be consistent throughout
+a  = qeye(2)  ⊗ destroy(N)  
+Ω  = 0.05 
+σ  = sigmam() ⊗ qeye(N)
+
+Ha = ωa / 2 * σz
+Hc = ωc * a' * a # the symbol `'` after a `QuantumObject` act as †
+Hc_ = ωc_ * a' * a
+Hint = Ω * (σ * a' + σ' * a)
+
+Htot  = Ha + Hc  + Hint
+Htot_ = Ha + Hc_ + Hint
+
+print(Htot)
+println("\n####################\n")
+print(Htot_)
+```
+
+## Isolated case
+For the case of JC system being isolated, i.e., no interaction with the surrounding environment, the system's time-evolution is governed solely by Schrödinger equation $\hat{H}|\psi\rangle = \partial_t|\psi(t)\rangle$. For pure state evolution, using `QuantumToolbox.sesolve()` is most ideal.
+
+
+```{julia}
+# define initial state ψ0
+ψ0 = basis(2,1) ⊗ fock(N, 6) + basis(2,0) ⊗ fock(N, 7) 
+ψ0 = ψ0 / norm(ψ0)
+
+tlist = 0:0.5:50 # a list of time points of interest
+
+# define a list of operators whose expectaion value dynamics is to be observed
+eop_ls = [
+    a' * a, # number operator of cavity Fock space
+    σ' * σ  # excited state population in atom
+]
+
+sol  = sesolve(Htot , ψ0, tlist; e_ops = eop_ls)
+sol_ = sesolve(Htot_, ψ0, tlist; e_ops = eop_ls)
+print(sol)
+println("\n####################\n")
+print(sol_)
+```
+
+```{julia}
+# Create the first figure for expectation value of photon count
+n  = real.(sol.expect[1, :])
+n_ = real.(sol_.expect[1, :])
+fign = Figure(size = (600, 350))
+axn = Axis(
+    fign[1, 1],
+    title = "⟨n⟩",
+    xlabel = "time [1/ωa]", 
+    ylabel = "expectation value", 
+    xlabelsize = 15, 
+    ylabelsize = 15,
+    width = 400,
+    height = 220
+    )
+lines!(axn, tlist, n,  label = "resonant")
+lines!(axn, tlist, n_, label = "off resonant")
+axislegend(axn; position = :rt, labelsize = 12)
+display(fign);
+```
+
+```{julia}
+# Create the second figure for atom excited state population
+e  = real.(sol.expect[2, :])
+e_ = real.(sol_.expect[2, :]) 
+fige = Figure(size = (600, 350))
+axe = Axis(
+    fige[1, 1], 
+    title = "⟨e⟩",
+    xlabel = "time [1/ωa]", 
+    ylabel = "probability", 
+    xlabelsize = 15, 
+    ylabelsize = 15,
+    width = 400,
+    height = 220
+    )
+ylims!(axe, 0, 1)
+lines!(axe, tlist, e,  label = "resonant")
+lines!(axe, tlist, e_, label = "off resonant")
+axislegend(axe; position = :rb, labelsize = 12)
+display(fige);
+```
+
+## Version Information
+```{julia}
+QuantumToolbox.versioninfo()
+```
